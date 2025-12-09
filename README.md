@@ -35,14 +35,15 @@ This is **not translation** (meaning is unchanged).
 - **Training Type:** Fully supervised
 - **Special Tokens:** `<pad>`, `<sos>`, `<eos>`
 
-### Model Hyperparameters
+### Model Hyperparameters (Transformer)
 
 | Parameter | Value |
 |----------|--------|
-| Encoder Embedding | 128 |
-| Decoder Embedding | 128 |
-| Hidden Size | 256 |
-| GRU Layers | 1 |
+| Encoder Embedding (d_model) | 128 |
+| Decoder Embedding (d_model) | 128 |
+| Attention Heads | 4 |
+| Transformer Layers | 2 |
+| Feedforward Dimension | 256 |
 | Dropout | 0.2 |
 | Optimizer | Adam |
 | Learning Rate | 1e-3 |
@@ -56,6 +57,7 @@ The dataset is built using the **Dakshina Hindi Lexicon Splits**:
 - `hi.translit.sampled.train.tsv`
 - `hi.translit.sampled.dev.tsv`
 - `hi.translit.sampled.test.tsv`
+- `hi.romanized.rejoined.aligned.cased_nopunct.tsv`
 
 Each row contains:
 
@@ -64,7 +66,7 @@ Each row contains:
 
 | Split | Samples |
 |--------|----------|
-| Train | 79,805 |
+| Train | 66,570 |
 | Validation | 4,358 |
 | Test | 4,502 |
 
@@ -72,9 +74,9 @@ Each row contains:
 - Roman outputs are normalized to **lowercase a–z only**
 
 ---
-## 📊 Evaluation Metrics
+## 📊 Evaluation Metrics 
 
-| Model | Time |
+| Model | Time (20 epochs)|
 |--------|----------|
 | GRU | 30 mins |
 | Transformer | 3 mins |
