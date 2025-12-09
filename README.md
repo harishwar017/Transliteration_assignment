@@ -1,13 +1,17 @@
 # Transliteration_assignment
 
-# Hindi → Roman Transliteration using Character-Level GRU
+# Hindi → Roman script Transliteration using a Character-Level Transformer encoder–decoder model
 
-This project implements a **lightweight character-level GRU encoder–decoder model** that transliterates **Hindi words into Roman (Latin) script**.  
+This project implements **lightweight character-level Transformer encoder–decoder model** (0.6 M) that transliterates **Hindi words into Roman (Latin) script**. I have also experimented with GRU based seq-seq model and have compared both.
 The model is trained from scratch using the **Dakshina transliteration dataset** and deployed as a live demo using **HuggingFace Spaces**.
+
+- Final model link:'https://huggingface.co/spaces/harishwar017/transliteration_transformer'
+- Training dataset link:'https://huggingface.co/datasets/harishwar017/translit_training_data'
+- Validation dataset link:'https://huggingface.co/datasets/harishwar017/translit_test_data'
 
 ---
 
-## 🔹 What is Transliteration?
+## What is Transliteration?
 
 **Transliteration** is the process of converting text from one script to another **without changing the language**.
 
@@ -23,9 +27,9 @@ This is **not translation** (meaning is unchanged).
 
 ---
 
-## ✅ Model Overview
+## Model Overview
 
-- **Architecture:** Character-level Seq2Seq (GRU Encoder–Decoder)
+- **Architecture:** Character-level Seq2Seq (GRU/Transformer Encoder–Decoder)
 - **Input:** Hindi word (Devanagari script)
 - **Output:** Romanized word (Latin script)
 - **Training Type:** Fully supervised
@@ -45,7 +49,7 @@ This is **not translation** (meaning is unchanged).
 
 ---
 
-## 📂 Dataset
+## Dataset
 
 The dataset is built using the **Dakshina Hindi Lexicon Splits**:
 
@@ -64,22 +68,35 @@ Each row contains:
 | Validation | 4,358 |
 | Test | 4,502 |
 
-✅ Only **clean word-level data** is used  
-✅ Roman outputs are normalized to **lowercase a–z only**
+- Only **clean word-level data** is used  
+- Roman outputs are normalized to **lowercase a–z only**
 
 ---
+## 📊 Evaluation Metrics
+
+| Model | Time |
+|--------|----------|
+| GRU | 30 mins |
+| Transformer | 3 mins % |
 
 ## 📊 Evaluation Metrics
 
 - **Primary Metric:** Exact Match Word Accuracy  
 - Accuracy is computed by comparing full predicted words with ground truth.
 
+GRU Accuracy
+
 | Split | Accuracy |
 |--------|----------|
 | Validation | 25.56 % |
 | Test | 24.57 % |
 
-_(Fill these numbers after your final evaluation run)_
+Transformer Accuracy
+
+| Split | Accuracy |
+|--------|----------|
+| Validation | 45.56 % |
+| Test | 44.57 % |
 
 ---
 
@@ -87,35 +104,42 @@ _(Fill these numbers after your final evaluation run)_
 
 Average inference time per word:
 
+GRU:
+
 | Device | Latency |
 |--------|----------|
 | CPU | 3.329 ms / word |
 | GPU | 2.921 ms / word |
 
+
+Transformer:
+
+| Device | Latency |
+|--------|----------|
+| CPU | 25.095 ms / word |
+| GPU | 22.095 ms / word |
+
+
 _(Measured using random Hindi words from the training set)_
 
 ---
 
-## 🌐 Live Demo (HuggingFace Spaces)
+## Live Demo (HuggingFace Spaces)
 
 You can try sentence-level transliteration here:
 
 🔗 **HuggingFace Space:**  
-`https://huggingface.co/spaces/harishwar017/YOUR_SPACE_NAME`
+`https://huggingface.co/spaces/harishwar017/transliteration_transformer`
 
 - Paste a **Hindi sentence**
 - It is internally split into words
 - Each word is transliterated
 - Final Romanized sentence is returned with punctuation preserved
 
----
-
-## 🤗 Pretrained Model
-
 The trained model and vocabularies are hosted on HuggingFace:
 
-🔗 **HuggingFace Model:**  
-`https://huggingface.co/harishwar017/hindi-roman-gru`
+🔗 **Other Experiments:**  
+- GRU model: 'https://huggingface.co/harishwar017/hindi-roman-gru'
 
 Files included:
 - `best_hindi_roman_gru.pt`
@@ -124,13 +148,14 @@ Files included:
 
 ---
 
-## 🛠 Project Structure
+### File Descriptions
 
-├── app.py # Gradio app for HuggingFace Space
-├── train.py # Model training script
-├── data_prep.py # Dataset processing script
-├── requirements.txt
-├── src_stoi.json
-├── tgt_stoi.json
-└── README.md
+| File Name | Purpose |
+| :--- | :--- |
+| `app.py` | Hosts the web interface (Gradio) for live model inference and demonstration, primarily for Hugging Face Spaces. |
+| `train.py` | Contains the script for defining, compiling, and running the model training loop. |
+| `data_prep.py` | Used to load, clean, tokenize, and process the raw dataset into a format usable for training. |
+| `requirements.txt` | Lists all necessary Python dependencies (libraries and versions) for the project. |
+| `src_stoi.json` | Stores the vocabulary mapping (string-to-index) for the source/input data tokens. |
+| `tgt_stoi.json` | Stores the vocabulary mapping (string-to-index) for the target/output data tokens. |
 
