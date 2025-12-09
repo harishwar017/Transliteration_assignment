@@ -77,7 +77,7 @@ Each row contains:
 | Model | Time |
 |--------|----------|
 | GRU | 30 mins |
-| Transformer | 3 mins % |
+| Transformer | 3 mins |
 
 ## 📊 Evaluation Metrics
 
