@@ -89,7 +89,7 @@ Average inference time per word:
 
 | Device | Latency |
 |--------|----------|
-| CPU | XX.XX ms |
+| CPU | 6.929 ms / word |
 | GPU | XX.XX ms |
 
 _(Measured using random Hindi words from the training set)_
