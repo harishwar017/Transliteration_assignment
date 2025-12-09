@@ -76,8 +76,8 @@ Each row contains:
 
 | Split | Accuracy |
 |--------|----------|
-| Validation | XX.XX % |
-| Test | XX.XX % |
+| Validation | 25.56 % |
+| Test | 24.57 % |
 
 _(Fill these numbers after your final evaluation run)_
 
@@ -89,8 +89,8 @@ Average inference time per word:
 
 | Device | Latency |
 |--------|----------|
-| CPU | 6.929 ms / word |
-| GPU | XX.XX ms |
+| CPU | 3.329 ms / word |
+| GPU | 2.921 ms / word |
 
 _(Measured using random Hindi words from the training set)_
 
