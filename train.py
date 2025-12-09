@@ -11,6 +11,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import Dataset, DataLoader
+import math
 
 
 ########################################
@@ -111,49 +112,117 @@ def collate_fn(batch, pad_idx: int):
 # Model
 ########################################
 
-class EncoderGRU(nn.Module):
-    def __init__(self, input_dim, emb_dim, hid_dim, num_layers=1, dropout=0.1, pad_idx=0):
+
+class PositionalEncoding(nn.Module):
+    def __init__(self, d_model, max_len=5000):
+        super().__init__()
+        pe = torch.zeros(max_len, d_model)  # (max_len, d_model)
+        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)  # (max_len, 1)
+        div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+
+        pe = pe.unsqueeze(0)  # (1, max_len, d_model)
+        self.register_buffer("pe", pe)
+
+    def forward(self, x):
+        """
+        x: (B, T, d_model)
+        """
+        seq_len = x.size(1)
+        x = x + self.pe[:, :seq_len, :]
+        return x
+
+
+class TransformerEncoder(nn.Module):
+    def __init__(self, input_dim, emb_dim, n_heads, num_layers, ff_dim, dropout, pad_idx):
         super().__init__()
         self.embedding = nn.Embedding(input_dim, emb_dim, padding_idx=pad_idx)
-        self.gru = nn.GRU(
-            emb_dim,
-            hid_dim,
-            num_layers=num_layers,
+        self.pos_encoder = PositionalEncoding(emb_dim)
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=emb_dim,
+            nhead=n_heads,
+            dim_feedforward=ff_dim,
+            dropout=dropout,
             batch_first=True,
         )
+        self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
         self.dropout = nn.Dropout(dropout)
+        self.pad_idx = pad_idx
 
     def forward(self, src):
-        # src: (B, src_len)
-        embedded = self.dropout(self.embedding(src))      # (B, src_len, emb_dim)
-        outputs, hidden = self.gru(embedded)              # outputs: (B, src_len, H)
-        return outputs, hidden
+        """
+        src: (B, src_len)
+        Returns:
+          memory: (B, src_len, emb_dim)
+          src_key_padding_mask: (B, src_len) bool
+        """
+        # (B, src_len, emb_dim)
+        embedded = self.dropout(self.embedding(src))
+        embedded = self.pos_encoder(embedded)
+
+        src_key_padding_mask = (src == self.pad_idx)  # True where padding
+
+        memory = self.encoder(
+            embedded,
+            src_key_padding_mask=src_key_padding_mask,
+        )
+        return memory, src_key_padding_mask
 
 
-class DecoderGRU(nn.Module):
-    def __init__(self, output_dim, emb_dim, hid_dim, num_layers=1, dropout=0.1, pad_idx=0):
+class TransformerDecoder(nn.Module):
+    def __init__(self, output_dim, emb_dim, n_heads, num_layers, ff_dim, dropout, pad_idx):
         super().__init__()
         self.embedding = nn.Embedding(output_dim, emb_dim, padding_idx=pad_idx)
-        self.gru = nn.GRU(
-            emb_dim,
-            hid_dim,
-            num_layers=num_layers,
+        self.pos_encoder = PositionalEncoding(emb_dim)
+        decoder_layer = nn.TransformerDecoderLayer(
+            d_model=emb_dim,
+            nhead=n_heads,
+            dim_feedforward=ff_dim,
+            dropout=dropout,
             batch_first=True,
         )
-        self.fc_out = nn.Linear(hid_dim, output_dim)
+        self.decoder = nn.TransformerDecoder(decoder_layer, num_layers=num_layers)
+        self.fc_out = nn.Linear(emb_dim, output_dim)
         self.dropout = nn.Dropout(dropout)
+        self.pad_idx = pad_idx
 
-    def forward(self, input, hidden):
-        # input: (B,)
-        input = input.unsqueeze(1)                     # (B, 1)
-        embedded = self.dropout(self.embedding(input))  # (B, 1, emb_dim)
-        output, hidden = self.gru(embedded, hidden)   # output: (B, 1, H)
-        output = output.squeeze(1)                    # (B, H)
-        logits = self.fc_out(output)                  # (B, output_dim)
-        return logits, hidden
+    def _generate_square_subsequent_mask(self, sz, device):
+        # standard causal mask: True above diagonal (masked)
+        mask = torch.triu(torch.ones(sz, sz, device=device), diagonal=1).bool()
+        return mask  # (sz, sz)
+
+    def forward(self, tgt_input, memory, memory_key_padding_mask):
+        """
+        tgt_input: (B, tgt_len_in)  [this is input sequence, typically shifted right]
+        memory: (B, src_len, emb_dim)
+        memory_key_padding_mask: (B, src_len)
+        Returns:
+          logits: (B, tgt_len_in, output_dim)
+        """
+        device = tgt_input.device
+        tgt_key_padding_mask = (tgt_input == self.pad_idx)  # (B, tgt_len_in)
+
+        # (B, tgt_len_in, emb_dim)
+        embedded = self.dropout(self.embedding(tgt_input))
+        embedded = self.pos_encoder(embedded)
+
+        tgt_len = tgt_input.size(1)
+        tgt_mask = self._generate_square_subsequent_mask(tgt_len, device)  # (tgt_len, tgt_len)
+
+        dec_output = self.decoder(
+            embedded,
+            memory,
+            tgt_mask=tgt_mask,
+            tgt_key_padding_mask=tgt_key_padding_mask,
+            memory_key_padding_mask=memory_key_padding_mask,
+        )  # (B, tgt_len_in, emb_dim)
+
+        logits = self.fc_out(dec_output)  # (B, tgt_len_in, output_dim)
+        return logits
 
 
-class Seq2Seq(nn.Module):
+class Seq2SeqTransformer(nn.Module):
     def __init__(self, encoder, decoder, pad_idx, sos_idx, eos_idx, device):
         super().__init__()
         self.encoder = encoder
@@ -163,27 +232,29 @@ class Seq2Seq(nn.Module):
         self.eos_idx = eos_idx
         self.device = device
 
-    def forward(self, src, src_lens, tgt, teacher_forcing_ratio=0.5):
+    def forward(self, src, src_lens, tgt, teacher_forcing_ratio=0.0):
         """
         src: (B, src_len)
-        tgt: (B, tgt_len) with <sos> at position 0
+        tgt: (B, tgt_len), includes <sos> at position 0, <eos> somewhere after.
+        Returns:
+          outputs: (B, tgt_len, vocab_size)
         """
-        batch_size, tgt_len = tgt.shape
-        vocab_size = self.decoder.fc_out.out_features
+        # Encode
+        memory, src_key_padding_mask = self.encoder(src)  # memory: (B, src_len, D)
 
-        outputs = torch.zeros(batch_size, tgt_len, vocab_size, device=self.device)
+        # For training: we feed everything except last token as input,
+        # and predict tokens 1..T-1.
+        tgt_input = tgt[:, :-1]      # (B, T-1)
+        logits = self.decoder(
+            tgt_input,
+            memory,
+            memory_key_padding_mask=src_key_padding_mask,
+        )  # (B, T-1, vocab)
 
-        _, hidden = self.encoder(src)       # hidden: (num_layers, B, H)
-        input_token = tgt[:, 0]             # <sos>
-
-        for t in range(1, tgt_len):
-            logits, hidden = self.decoder(input_token, hidden)
-            outputs[:, t, :] = logits
-
-            teacher_force = random.random() < teacher_forcing_ratio
-            top1 = logits.argmax(1)
-
-            input_token = tgt[:, t] if teacher_force else top1
+        # We want outputs to have same length as tgt (so add a dummy zero at t=0)
+        B, Tm1, V = logits.shape
+        outputs = torch.zeros(B, Tm1 + 1, V, device=self.device)
+        outputs[:, 1:, :] = logits
 
         return outputs
 
@@ -244,38 +315,49 @@ def evaluate(model, loader, criterion, pad_idx, device="cpu"):
 # Inference for accuracy
 ########################################
 
+
+
 @torch.no_grad()
-def transliterate_word(model, word: str, src_stoi, tgt_itos, sos_idx, eos_idx, pad_idx, device, max_len: int = 30):
+def transliterate_word(model, word, src_stoi, tgt_itos, tgt_stoi, max_len=30):
+    model.eval()
+    device = next(model.parameters()).device
+
+    # Encode source word
     src_ids = [src_stoi[ch] for ch in word if ch in src_stoi]
     if not src_ids:
         return ""
+    src_tensor = torch.tensor(src_ids, dtype=torch.long, device=device).unsqueeze(0)  # (1, L)
+    memory, src_key_padding_mask = model.encoder(src_tensor)  # (1, L, D)
+    
+    PAD_IDX = tgt_stoi[PAD_TOKEN]
+    SOS_IDX = tgt_stoi[SOS_TOKEN]
+    EOS_IDX = tgt_stoi[EOS_TOKEN]
 
-    src_tensor = torch.tensor(src_ids, dtype=torch.long, device=device).unsqueeze(0)
-    src_lens = torch.tensor([len(src_ids)], dtype=torch.long)
-
-    _, hidden = model.encoder(src_tensor)
-
-    input_token = torch.tensor([sos_idx], dtype=torch.long, device=device)
-    decoded = []
-
+    # Start tgt with <sos>
+    tgt_ids = [SOS_IDX]
     for _ in range(max_len):
-        logits, hidden = model.decoder(input_token, hidden)
-        top1 = logits.argmax(1)
-        idx = top1.item()
+        tgt_input = torch.tensor(tgt_ids, dtype=torch.long, device=device).unsqueeze(0)  # (1, t)
+        logits = model.decoder(
+            tgt_input,
+            memory,
+            memory_key_padding_mask=src_key_padding_mask,
+        )  # (1, t, vocab)
 
-        if idx == eos_idx or idx == pad_idx:
+        next_token_logits = logits[0, -1, :]  # last position
+        next_id = next_token_logits.argmax(-1).item()
+
+        if next_id == EOS_IDX or next_id == PAD_IDX:
             break
-        decoded.append(idx)
-        input_token = top1
 
-    chars = []
-    for idx in decoded:
-        chars.append(tgt_itos[idx])
+        tgt_ids.append(next_id)
+
+    # Convert ids → string (skip <sos>)
+    chars = [tgt_itos[idx] for idx in tgt_ids[1:]]
     return "".join(chars)
 
 
 @torch.no_grad()
-def compute_exact_match_accuracy(model, df, src_stoi, tgt_itos, sos_idx, eos_idx, pad_idx, device):
+def compute_exact_match_accuracy(model, df, src_stoi, tgt_itos, sos_idx, eos_idx, tgt_stoi, pad_idx, device):
     model.eval()
     correct = 0
     total = len(df)
@@ -283,7 +365,7 @@ def compute_exact_match_accuracy(model, df, src_stoi, tgt_itos, sos_idx, eos_idx
     for _, row in df.iterrows():
         native = row["native"]
         gold = row["roman"]
-        pred = transliterate_word(model, native, src_stoi, tgt_itos, sos_idx, eos_idx, pad_idx, device)
+        pred = transliterate_word(model, native, src_stoi, tgt_itos, sos_idx, eos_idx, tgt_stoi, pad_idx, device)
         if pred == gold:
             correct += 1
 
@@ -295,7 +377,7 @@ def compute_exact_match_accuracy(model, df, src_stoi, tgt_itos, sos_idx, eos_idx
 ########################################
 
 def main():
-    parser = argparse.ArgumentParser(description="Train Hindi→Roman GRU transliteration model.")
+    parser = argparse.ArgumentParser(description="Train Hindi→Roman Transformer transliteration model.")
     parser.add_argument("--data_dir", type=str, default="./data",
                         help="Directory containing train.tsv, val.tsv, test.tsv.")
     parser.add_argument("--epochs", type=int, default=20)
@@ -348,12 +430,12 @@ def main():
     input_dim = len(src_stoi)
     output_dim = len(tgt_stoi)
 
-    encoder = EncoderGRU(input_dim, args.enc_emb_dim, args.hid_dim,
+    encoder = TransformerEncoder(input_dim, args.enc_emb_dim, args.hid_dim,
                          num_layers=1, dropout=args.dropout, pad_idx=pad_idx)
-    decoder = DecoderGRU(output_dim, args.dec_emb_dim, args.hid_dim,
+    decoder = TransformerDecoder(output_dim, args.dec_emb_dim, args.hid_dim,
                          num_layers=1, dropout=args.dropout, pad_idx=pad_idx)
 
-    model = Seq2Seq(encoder, decoder, pad_idx, sos_idx, eos_idx, device).to(device)
+    model = Seq2SeqTransformer(encoder, decoder, pad_idx, sos_idx, eos_idx, device).to(device)
 
     print(f"[INFO] Model parameters: {sum(p.numel() for p in model.parameters()) / 1e6:.3f}M")
 
@@ -361,7 +443,7 @@ def main():
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
 
     best_val_loss = float("inf")
-    best_model_path = save_dir / "best_hindi_roman_gru.pt"
+    best_model_path = save_dir / "best_hindi_roman_transformer.pt"
 
     for epoch in range(1, args.epochs + 1):
         # simple teacher forcing schedule
@@ -390,8 +472,8 @@ def main():
         tgt_itos_list[idx] = ch
 
     val_acc = compute_exact_match_accuracy(model, val_df, src_stoi, tgt_itos_list,
-                                           sos_idx, eos_idx, pad_idx, device)
-    test_acc = compute_exact_match_accuracy(model, test_df, src_stoi, tgt_itos_list,
+                                           sos_idx, eos_idx, pad_idx, tgt_stoi, device)
+    test_acc = compute_exact_match_accuracy(model, test_df, src_stoi, tgt_stoi, tgt_itos_list,
                                             sos_idx, eos_idx, pad_idx, device)
 
     print(f"[RESULT] Validation exact-match accuracy: {val_acc * 100:.2f}%")
